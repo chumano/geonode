@@ -3,7 +3,7 @@ version: '3.9'
 # Common Django template for GeoNode and Celery services below
 x-common-django:
   &default-common-django
-  image: geonode/geonode:4.0
+  image: ${DOCKER_HUB}/geonode:4.0
   restart: on-failure
   env_file:
     - .env
@@ -25,9 +25,9 @@ services:
   # Our custom django application. It includes Geonode.
   django:
     << : *default-common-django
-    build:
-      context: ./
-      dockerfile: Dockerfile
+    #build:
+    #  context: ./
+    #  dockerfile: Dockerfile
     container_name: django4${COMPOSE_PROJECT_NAME}
     healthcheck:
       test: "curl --fail --silent --write-out 'HTTP CODE : %{http_code}\n' --output /dev/null http://127.0.0.1:8001/"
@@ -39,11 +39,13 @@ services:
       - IS_CELERY=False
     entrypoint: ["/usr/src/geonode/entrypoint.sh"]
     command: "uwsgi --ini /usr/src/geonode/uwsgi.ini"
+    networks:
+      - internal_net
 
   # Celery worker that executes celery tasks created by Django.
   celery:
     << : *default-common-django
-    image: geonode/geonode:4.0
+    image: ${DOCKER_HUB}/geonode:4.0
     container_name: celery4${COMPOSE_PROJECT_NAME}
     depends_on:
       - django
@@ -66,26 +68,34 @@ services:
       - RESOLVER=127.0.0.11
     ports:
       - "${HTTP_PORT}:80"
-      - "${HTTPS_PORT}:443"
+      #- "${HTTPS_PORT}:443"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.geonode-gateway.rule=Host(`maphub.dientoan.vn`)"
+      - "traefik.http.routers.geonode-gateway.entrypoints=http"
+      - "traefik.http.services.geonode-gateway.loadbalancer.server.port=80"
     volumes:
       - nginx-confd:/etc/nginx
       - nginx-certificates:/geonode-certificates
       - statics:/mnt/volumes/statics
     restart: on-failure
+    networks:
+      - internal_net
+      - traefik-proxy
 
   # Gets and installs letsencrypt certificates
-  letsencrypt:
-    image: geonode/letsencrypt:4.0
-    build: ./scripts/docker/letsencrypt/
-    container_name: letsencrypt4${COMPOSE_PROJECT_NAME}
-    environment:
-      - HTTPS_HOST=${HTTPS_HOST}
-      - HTTP_HOST=${HTTP_HOST}
-      - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - LETSENCRYPT_MODE=${LETSENCRYPT_MODE}
-    volumes:
-      - nginx-certificates:/geonode-certificates
-    restart: on-failure
+  # letsencrypt:
+  #   image: geonode/letsencrypt:4.0
+  #   build: ./scripts/docker/letsencrypt/
+  #   container_name: letsencrypt4${COMPOSE_PROJECT_NAME}
+  #   environment:
+  #     - HTTPS_HOST=${HTTPS_HOST}
+  #     - HTTP_HOST=${HTTP_HOST}
+  #     - ADMIN_EMAIL=${ADMIN_EMAIL}
+  #     - LETSENCRYPT_MODE=${LETSENCRYPT_MODE}
+  #   volumes:
+  #     - nginx-certificates:/geonode-certificates
+  #   restart: on-failure
 
   # Geoserver backend
   geoserver:
@@ -111,6 +121,8 @@ services:
         condition: service_healthy
       data-dir-conf:
         condition: service_healthy
+    networks:
+      - internal_net
 
   data-dir-conf:
     image: geonode/geoserver_data:2.23.x
@@ -139,6 +151,8 @@ services:
     # uncomment to enable remote connections to postgres
     #ports:
     #  - "5432:5432"
+    networks:
+      - internal_net
 
   # Vanilla RabbitMQ service. This is needed by celery
   rabbitmq:
@@ -147,6 +161,8 @@ services:
     volumes:
       - rabbitmq:/var/lib/rabbitmq
     restart: on-failure
+    networks:
+      - internal_net
 
 volumes:
   statics:
@@ -169,3 +185,9 @@ volumes:
     name: ${COMPOSE_PROJECT_NAME}-tmp
   rabbitmq:
     name: ${COMPOSE_PROJECT_NAME}-rabbitmq
+
+networks:
+  internal_net:
+  traefik-proxy:
+    name: traefik
+    external: true
